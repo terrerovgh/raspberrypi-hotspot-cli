@@ -1,0 +1,128 @@
+#!/bin/bash
+# hotspot - Standalone CLI for Raspberry Pi WiFi Hotspot
+# See README.md for usage and details
+
+SCRIPT_DIR="/usr/local/lib/raspberrypi-hotspot-cli/scripts"
+DEFAULT_SSID="TerrerovHotspot"
+DEFAULT_PASSPHRASE="raspberry2025"
+DEFAULT_WIFI_IFACE="wlan0"
+DEFAULT_INTERNET_IFACE="eth0"
+
+SSID="$DEFAULT_SSID"
+PASSPHRASE="$DEFAULT_PASSPHRASE"
+WIFI_IFACE="$DEFAULT_WIFI_IFACE"
+INTERNET_IFACE="$DEFAULT_INTERNET_IFACE"
+
+show_help() {
+  cat <<EOF
+Hotspot WiFi DevOps Manager (CLI)
+
+Usage:
+  hotspot <start|stop|restart|status|logs> [options]
+
+Commands:
+  start       Start the WiFi hotspot with the current or provided configuration.
+  stop        Stop the WiFi hotspot and clean up firewall/NAT rules.
+  restart     Restart the hotspot (stop and start, reloads configuration and rules).
+  status      Show the current status of the systemd hotspot service.
+  logs        Show the latest logs for the hotspot systemd service.
+
+Options:
+  --ssid <name>         Set the WiFi SSID (network name) for the hotspot.
+  --pass <password>     Set the WPA2 password for the hotspot (min 8 chars).
+  --wifi <iface>        Set the WiFi interface to use (default: wlan0).
+  --inet <iface>        Set the outgoing Internet interface (default: eth0).
+  --help                Show this help message and exit.
+
+Examples:
+  hotspot start --ssid MyNetwork --pass mysecretpass
+      Start the hotspot with SSID 'MyNetwork' and password 'mysecretpass'.
+
+  hotspot stop
+      Stop the hotspot and remove all related firewall/NAT rules.
+
+  hotspot restart --wifi wlan1 --inet eth1
+      Restart the hotspot using wlan1 for WiFi and eth1 for Internet.
+
+  hotspot status
+      Show the status of the hotspot systemd service (active, failed, etc).
+
+  hotspot logs
+      Show the latest logs for troubleshooting the hotspot service.
+
+Description:
+  This CLI tool manages the WiFi hotspot on your Raspberry Pi, including starting,
+  stopping, and restarting the hotspot, as well as configuring SSID, password,
+  and network interfaces. It also integrates with systemd for robust service
+  management and logs. All firewall (iptables) and NAT rules are handled
+  automatically. Use this tool to quickly deploy or troubleshoot your DevOps
+  WiFi hotspot stack.
+EOF
+}
+
+color() {
+  case "$1" in
+    red) echo -e "\033[31m$2\033[0m";;
+    green) echo -e "\033[32m$2\033[0m";;
+    yellow) echo -e "\033[33m$2\033[0m";;
+    blue) echo -e "\033[34m$2\033[0m";;
+    magenta) echo -e "\033[35m$2\033[0m";;
+    cyan) echo -e "\033[36m$2\033[0m";;
+    bold) echo -e "\033[1m$2\033[0m";;
+    *) echo "$2";;
+  esac
+}
+
+ACTION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    start|stop|restart|status|logs)
+      ACTION="$1"; shift ;;
+    --ssid)
+      SSID="$2"; shift 2 ;;
+    --pass)
+      PASSPHRASE="$2"; shift 2 ;;
+    --wifi)
+      WIFI_IFACE="$2"; shift 2 ;;
+    --inet)
+      INTERNET_IFACE="$2"; shift 2 ;;
+    --help|-h)
+      show_help; exit 0 ;;
+    *)
+      echo "[ERROR] Unknown option: $1"; show_help; exit 1 ;;
+  esac
+done
+
+if [[ -z "$ACTION" ]]; then
+  show_help; exit 1
+fi
+
+export SSID PASSPHRASE WIFI_IFACE INTERNET_IFACE
+
+case "$ACTION" in
+  start)
+    SSID="$SSID" PASSPHRASE="$PASSPHRASE" WIFI_IFACE="$WIFI_IFACE" INTERNET_IFACE="$INTERNET_IFACE" bash "$SCRIPT_DIR/start-hotspot.sh"
+    ;;
+  stop)
+    WIFI_IFACE="$WIFI_IFACE" INTERNET_IFACE="$INTERNET_IFACE" bash "$SCRIPT_DIR/stop-hotspot.sh"
+    ;;
+  restart)
+    WIFI_IFACE="$WIFI_IFACE" INTERNET_IFACE="$INTERNET_IFACE" bash "$SCRIPT_DIR/reload-hotspot.sh"
+    ;;
+  status)
+    systemctl status wifi-hotspot.service
+    ;;
+  logs)
+    color bold "==== [Hotspot Service Logs] ===="
+    sudo journalctl -u wifi-hotspot.service --no-pager -n 50 | sed 's/^/    /'
+    color bold "\n==== [create_ap Logs] ===="
+    sudo grep -E "create_ap|AP-ENABLED|AP-DISABLED|hostapd|dnsmasq" /var/log/syslog 2>/dev/null | tail -n 30 | sed 's/^/    /' || true
+    color bold "\n==== [iptables Rules] ===="
+    sudo iptables -L -n -v --line-numbers | sed 's/^/    /'
+    color bold "\n==== [NAT Table] ===="
+    sudo iptables -t nat -L -n -v --line-numbers | sed 's/^/    /'
+    ;;
+  *)
+    show_help; exit 1
+    ;;
+esac
